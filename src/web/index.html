@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -84,30 +84,30 @@
 <body>
 <main>
   <h1>AltKeeper</h1>
-  <p class="sub">Tiene in vita le app dell'iPhone rinnovando i loro profili.</p>
+  <p class="sub">Keeps your iPhone apps alive by renewing their profiles.</p>
 
   <div class="banner bad" id="no-pairing" hidden>
-    Manca l'accoppiamento con l'iPhone (<code>rp-pairing.plist</code>). Si fa una volta sola, con il
-    cavo USB: segui la guida nel README.
+    iPhone pairing is missing (<code>rp-pairing.plist</code>). Set it up once with a USB cable:
+    follow the guide in the README.
   </div>
 
   <section class="card" aria-live="polite">
     <h2>iPhone</h2>
     <div class="row">
-      <span class="pill" id="phone-pill">Controllo in corso…</span>
+      <span class="pill" id="phone-pill">Checking…</span>
       <span class="muted grow" id="phone-addr"></span>
-      <button id="btn-check" type="button">Ricontrolla</button>
+      <button id="btn-check" type="button">Check again</button>
     </div>
     <div class="banner bad" id="phone-error" hidden></div>
   </section>
 
   <section class="card">
-    <h2>Le tue app</h2>
+    <h2>Your apps</h2>
     <p class="muted" id="apps-empty" hidden></p>
     <ul class="plain" id="apps"></ul>
     <div class="row" style="margin-top:14px">
-      <button class="primary" id="btn-due" type="button">Rinnova quelle in scadenza</button>
-      <button id="btn-all" type="button">Rinnova tutte adesso</button>
+      <button class="primary" id="btn-due" type="button">Renew expiring apps</button>
+      <button id="btn-all" type="button">Renew all now</button>
     </div>
     <p class="muted" id="renew-hint" style="margin:8px 0 0"></p>
     <div id="job" hidden>
@@ -121,41 +121,41 @@
     <div id="account-info" hidden>
       <div class="row">
         <span class="grow"><strong id="acc-id"></strong><br><span class="muted" id="acc-pw"></span></span>
-        <button id="btn-change" type="button">Cambia account</button>
+        <button id="btn-change" type="button">Change account</button>
       </div>
     </div>
     <form id="login-form" autocomplete="off" hidden>
-      <label for="apple-id">Apple ID (l'email)</label>
+      <label for="apple-id">Apple ID (email)</label>
       <input id="apple-id" type="email" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false">
       <label for="apple-pw">Password</label>
       <input id="apple-pw" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false">
-      <label class="check"><input type="checkbox" id="show-pw"> Mostra la password</label>
+      <label class="check"><input type="checkbox" id="show-pw"> Show password</label>
       <label class="check"><input type="checkbox" id="save-pw" checked>
-        <span>Salva la password su questo server per i rinnovi automatici<br>
-        <span class="muted">Resta scritta in chiaro in un file riservato del server.</span></span></label>
-      <button class="primary" id="btn-login" type="submit">Accedi</button>
-      <p class="muted">Fai un solo tentativo alla volta: se sbagli spesso, Apple può bloccare gli accessi per un po'.</p>
+        <span>Save the password on this server for automatic renewals<br>
+        <span class="muted">It is stored as plain text in a private server file.</span></span></label>
+      <button class="primary" id="btn-login" type="submit">Sign in</button>
+      <p class="muted">Try only once at a time: repeated failures may cause Apple to block sign-ins temporarily.</p>
     </form>
     <form id="code-form" autocomplete="off" hidden>
-      <div class="banner good">Apple ha mandato un codice a 6 cifre ai tuoi dispositivi.</div>
+      <div class="banner good">Apple sent a 6-digit code to your devices.</div>
       <div class="banner bad" id="code-error" hidden></div>
-      <label for="code">Codice</label>
+      <label for="code">Code</label>
       <input id="code" class="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code">
       <div class="row" style="margin-top:10px">
-        <button class="primary" id="btn-code" type="submit">Invia codice</button>
-        <button id="btn-resend" type="button">Reinvia il codice</button>
+        <button class="primary" id="btn-code" type="submit">Submit code</button>
+        <button id="btn-resend" type="button">Resend code</button>
       </div>
     </form>
     <div class="banner" id="login-msg" hidden></div>
   </section>
 
   <section class="card hist">
-    <h2>Ultimi rinnovi</h2>
-    <p class="muted" id="hist-empty">Ancora niente. Il rinnovo automatico parte ogni sera, se è configurato sul server.</p>
+    <h2>Recent renewals</h2>
+    <p class="muted" id="hist-empty">Nothing yet. Automatic renewal runs every evening when configured on the server.</p>
     <ul class="plain" id="hist"></ul>
   </section>
 
-  <footer>Da usare solo nella rete di casa.</footer>
+  <footer>For use on your home network only.</footer>
 </main>
 
 <script>
@@ -172,14 +172,14 @@ async function api(path, body) {
   const r = await fetch(path, opt);
   let j = {};
   try { j = await r.json(); } catch (_) {}
-  if (!r.ok) throw new Error(j.error || ("Errore " + r.status));
+  if (!r.ok) throw new Error(j.error || ("Error " + r.status));
   return j;
 }
 
 function days(n) {
-  if (n < 0) return "scaduta da " + (-n) + (n === -1 ? " giorno" : " giorni");
-  if (n === 0) return "scade oggi";
-  return "scade tra " + n + (n === 1 ? " giorno" : " giorni");
+  if (n < 0) return "expired " + (-n) + (n === -1 ? " day ago" : " days ago");
+  if (n === 0) return "expires today";
+  return "expires in " + n + (n === 1 ? " day" : " days");
 }
 
 function li(cls, ...kids) {
@@ -215,10 +215,10 @@ function render(s) {
 
   // iPhone
   const pill = $("phone-pill"), p = s.phone;
-  if (p.checking) { pill.textContent = "Controllo in corso…"; pill.className = "pill"; }
-  else if (p.reachable === true) { pill.textContent = "iPhone raggiungibile"; pill.className = "pill ok"; }
-  else if (p.reachable === false) { pill.textContent = "iPhone non raggiungibile"; pill.className = "pill bad"; }
-  else { pill.textContent = "Non ancora controllato"; pill.className = "pill"; }
+  if (p.checking) { pill.textContent = "Checking…"; pill.className = "pill"; }
+  else if (p.reachable === true) { pill.textContent = "iPhone reachable"; pill.className = "pill ok"; }
+  else if (p.reachable === false) { pill.textContent = "iPhone unreachable"; pill.className = "pill bad"; }
+  else { pill.textContent = "Not checked yet"; pill.className = "pill"; }
   $("phone-addr").textContent = p.reachable && p.address ? p.address : "";
   const err = p.reachable === false ? p.error : "";
   banner("phone-error", err, "bad");
@@ -237,28 +237,28 @@ function render(s) {
       bar));
   });
   const empty = $("apps-empty");
-  if (!s.account.present) { empty.textContent = "Accedi con il tuo Apple ID per vedere le app."; empty.hidden = false; }
-  else if (p.reachable === false) { empty.textContent = "Non posso leggere le app finché l'iPhone non è raggiungibile."; empty.hidden = false; }
-  else if (!s.apps.length && p.reachable === true) { empty.textContent = "Nessuna app trovata per questo Apple ID."; empty.hidden = false; }
+  if (!s.account.present) { empty.textContent = "Sign in with your Apple ID to see your apps."; empty.hidden = false; }
+  else if (p.reachable === false) { empty.textContent = "Apps cannot be read while the iPhone is unreachable."; empty.hidden = false; }
+  else if (!s.apps.length && p.reachable === true) { empty.textContent = "No apps found for this Apple ID."; empty.hidden = false; }
   else { empty.hidden = true; }
 
-  // Pulsanti di rinnovo
+  // Renewal buttons
   const canRenew = s.account.present && s.account.password_saved && s.account.team && !s.busy;
   $("btn-due").disabled = !canRenew;
   $("btn-all").disabled = !canRenew;
   $("btn-check").disabled = s.busy;
-  $("renew-hint").textContent = !s.account.present ? "Serve prima l'accesso con l'Apple ID."
-    : !s.account.password_saved ? "Per rinnovare la password deve essere salvata: rifai l'accesso e lascia la casella spuntata."
-    : s.busy ? "Sto lavorando…" : "";
+  $("renew-hint").textContent = !s.account.present ? "Sign in with your Apple ID first."
+    : !s.account.password_saved ? "The password must be saved to renew: sign in again and leave the checkbox selected."
+    : s.busy ? "Working…" : "";
 
   // Lavoro in corso o appena finito
   const job = s.job;
   show("job", !!job.kind);
   if (job.kind) {
     const st = $("job-status");
-    if (job.running) { st.className = "banner"; st.textContent = "Rinnovo in corso, non chiudere la pagina finché non finisce…"; }
-    else if (job.ok) { st.className = "banner good"; st.textContent = "Finito."; }
-    else { st.className = "banner bad"; st.textContent = "Non è andata a buon fine. Guarda l'ultima riga."; }
+    if (job.running) { st.className = "banner"; st.textContent = "Renewal in progress. Keep this page open until it finishes…"; }
+    else if (job.ok) { st.className = "banner good"; st.textContent = "Done."; }
+    else { st.className = "banner bad"; st.textContent = "It did not complete successfully. Check the last line."; }
     const log = $("job-log");
     const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
     log.textContent = job.lines.join("\n");
@@ -271,11 +271,11 @@ function render(s) {
   show("account-info", s.account.present && !showForm && !working && !needs);
   if (s.account.present) {
     $("acc-id").textContent = s.account.apple_id || "";
-    $("acc-pw").textContent = s.account.password_saved ? "Password salvata per i rinnovi automatici" : "Password non salvata";
+    $("acc-pw").textContent = s.account.password_saved ? "Password saved for automatic renewals" : "Password not saved";
   }
   show("login-form", (!s.account.present || showForm || working || phase === "failed") && !needs);
   $("btn-login").disabled = working || sending || (s.busy && !working);
-  $("btn-login").textContent = working ? "Accesso in corso…" : "Accedi";
+  $("btn-login").textContent = working ? "Signing in…" : "Sign in";
   show("code-form", needs);
   banner("code-error", needs ? s.login.code_error : "", "bad");
   banner("login-msg", phase === "done" || phase === "failed" ? s.login.message : "",
@@ -300,7 +300,7 @@ async function refresh() {
     fast = state.busy || state.phone.checking || state.login.phase === "working" ||
            state.login.phase === "needs_code" || state.job.running;
   } catch (e) {
-    banner("phone-error", "Non riesco a parlare col server: " + e.message, "bad");
+    banner("phone-error", "Cannot reach the server: " + e.message, "bad");
   }
   timer = setTimeout(refresh, fast ? 1500 : 15000);
 }
@@ -313,7 +313,7 @@ async function act(fn, errId) {
 $("btn-check").onclick = () => act(() => api("/api/check", {}));
 $("btn-due").onclick = () => act(() => api("/api/renew", { mode: "due" }));
 $("btn-all").onclick = () => {
-  if (confirm("Rinnovare tutte le app adesso? Servono circa un minuto e non serve farlo spesso.")) {
+  if (confirm("Renew all apps now? This takes about a minute and usually does not need to be done often.")) {
     act(() => api("/api/renew", { mode: "now" }));
   }
 };

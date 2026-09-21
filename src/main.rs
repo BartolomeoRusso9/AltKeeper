@@ -101,10 +101,8 @@ async fn cmd_phone(addr: Option<SocketAddr>) -> Result<(), String> {
 
 async fn cmd_login(apple_id: Option<String>) -> Result<(), String> {
     let apple_id = apple_id.ok_or("uso: altkeeper login <apple-id>")?;
-    print!("Password di {apple_id} (si vede mentre scrivi): ");
-    std::io::Write::flush(&mut std::io::stdout()).map_err(dbg)?;
-    let mut password = String::new();
-    std::io::stdin().read_line(&mut password).map_err(dbg)?;
+    let password = rpassword::prompt_password(format!("Password di {apple_id}: "))
+        .map_err(dbg)?;
     let password = password.trim().to_string();
     if password.is_empty() {
         return Err("password vuota".into());
@@ -164,9 +162,9 @@ async fn cmd_renew(
     say: &mut dyn FnMut(&str),
 ) -> Result<(), String> {
     let acc = apple::load_account(Path::new("."))?;
-    let team_id = acc.team_id.clone().ok_or("team non salvato: rifai il login")?;
+    let team_id = acc.team_id.clone().ok_or("team not saved: sign in again")?;
 
-    say("Collegamento al telefono...");
+    say("Connecting to the phone...");
     let mut link = open_phone(addr, &mut *say).await?;
     let profiles = phone_profiles(&mut link).await?;
     let mine: Vec<&profile::PhoneProfile> = profiles
@@ -174,7 +172,7 @@ async fn cmd_renew(
         .filter(|p| p.team_id.as_deref() == Some(team_id.as_str()))
         .collect();
     say(&format!(
-        "{} profili sul telefono, {} del team {team_id}",
+        "{} profiles on the phone, {} for team {team_id}",
         profiles.len(),
         mine.len()
     ));
@@ -192,22 +190,22 @@ async fn cmd_renew(
     let mut due: Vec<(&str, i64)> = Vec::new();
     for p in latest {
         let Some(bundle) = p.bundle_id.as_deref() else {
-            say(&format!("   {}: bundle ID non leggibile, salto", p.name));
+            say(&format!("   {}: bundle ID cannot be read, skipping", p.name));
             continue;
         };
         let days = p.days_left().unwrap_or(-1);
         if !force && days > min_days {
-            say(&format!("   {bundle}: scade tra {days} giorni, non serve rinnovare"));
+            say(&format!("   {bundle}: expires in {days} days, no renewal needed"));
             continue;
         }
         due.push((bundle, days));
     }
     if due.is_empty() {
-        say("Niente da rinnovare: non accedo ad Apple.");
+        say("Nothing to renew: skipping Apple sign-in.");
         return Ok(());
     }
 
-    say("Accesso ad Apple...");
+    say("Signing in to Apple...");
     apple::set_interactive(false);
     let mut sess = apple::open_session(Path::new("."), &acc.apple_id, &acc.password).await?;
     let team = apple::pick_team(&mut sess, Some(&team_id), false).await?;
@@ -216,24 +214,24 @@ async fn cmd_renew(
     let mut done = 0;
     for (bundle, days) in due {
         let Some(app) = ids.iter().find(|a| a.identifier == bundle) else {
-            say(&format!("   {bundle}: nessun App ID corrispondente su Apple, salto"));
+            say(&format!("   {bundle}: no matching App ID on Apple, skipping"));
             continue;
         };
         if dry_run {
-            say(&format!("   {bundle}: scade tra {days} giorni, RINNOVEREI (prova a vuoto)"));
+            say(&format!("   {bundle}: expires in {days} days, WOULD RENEW (dry run)"));
             continue;
         }
-        say(&format!("   {bundle}: scade tra {days} giorni, scarico un profilo nuovo..."));
+        say(&format!("   {bundle}: expires in {days} days, downloading a new profile..."));
         let new = apple::download_profile(&mut sess, &team, app).await?;
         say(&format!("      nuovo profilo valido fino al {}", new.date_expire.to_xml_format()));
         let bytes: Vec<u8> = new.encoded_profile.into();
         link.misagent.install(bytes).await.map_err(dbg)?;
-        say("      installato sul telefono");
+        say("      installed on the phone");
         done += 1;
     }
 
     if !dry_run && done > 0 {
-        say("Controllo finale sul telefono:");
+        say("Final check on the phone:");
         let after = phone_profiles(&mut link).await?;
         for p in after.iter().filter(|p| p.team_id.as_deref() == Some(team_id.as_str())) {
             say(&profile_line(p));

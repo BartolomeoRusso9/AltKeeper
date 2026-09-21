@@ -331,7 +331,7 @@ fn json_ok() -> (StatusCode, Json<Value>) {
     (StatusCode::OK, Json(json!({ "ok": true })))
 }
 
-const BUSY_MSG: &str = "Sto già facendo un'altra operazione: aspetta che finisca.";
+const BUSY_MSG: &str = "Another operation is already running: please wait for it to finish.";
 
 async fn state(State(app): State<Arc<App>>) -> Json<Value> {
     let account = apple::read_account(Path::new("."));
@@ -415,14 +415,14 @@ async fn renew(
     let force = match req.mode.as_str() {
         "now" => true,
         "due" => false,
-        _ => return json_err(StatusCode::BAD_REQUEST, "modo non valido"),
+        _ => return json_err(StatusCode::BAD_REQUEST, "Invalid mode"),
     };
     match apple::read_account(Path::new(".")) {
         Some(a) if !a.password.is_empty() && a.team_id.is_some() => {}
         _ => {
             return json_err(
                 StatusCode::BAD_REQUEST,
-                "Prima accedi con il tuo Apple ID e scegli di salvare la password.",
+                "Sign in with your Apple ID first and choose to save the password.",
             );
         }
     }
@@ -460,7 +460,7 @@ async fn login(
 ) -> (StatusCode, Json<Value>) {
     let id = req.apple_id.trim().to_string();
     if id.is_empty() || id.len() > 200 || req.password.is_empty() || req.password.len() > 200 {
-        return json_err(StatusCode::BAD_REQUEST, "Scrivi l'Apple ID e la password.");
+        return json_err(StatusCode::BAD_REQUEST, "Enter your Apple ID and password.");
     }
     let Some(guard) = try_busy(&app) else {
         return json_err(StatusCode::CONFLICT, BUSY_MSG);
@@ -484,12 +484,12 @@ async fn login_code(
 ) -> (StatusCode, Json<Value>) {
     let code = req.code.trim();
     if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) {
-        return json_err(StatusCode::BAD_REQUEST, "Il codice ha 6 cifre.");
+        return json_err(StatusCode::BAD_REQUEST, "The code must contain 6 digits.");
     }
     if app.tfa.answer(apple::TfaAnswer::Code(code.to_string())) {
         json_ok()
     } else {
-        json_err(StatusCode::CONFLICT, "Apple non sta aspettando un codice.")
+        json_err(StatusCode::CONFLICT, "Apple is not waiting for a code.")
     }
 }
 
@@ -497,7 +497,7 @@ async fn login_resend(State(app): State<Arc<App>>) -> (StatusCode, Json<Value>) 
     if app.tfa.answer(apple::TfaAnswer::Resend) {
         json_ok()
     } else {
-        json_err(StatusCode::CONFLICT, "Apple non sta aspettando un codice.")
+        json_err(StatusCode::CONFLICT, "Apple is not waiting for a code.")
     }
 }
 
@@ -548,7 +548,7 @@ async fn run_renew(app: Arc<App>, force: bool) {
 
     let ok = result.is_ok();
     if let Err(e) = &result {
-        app.push_line(&format!("Errore: {}", short_error(e)));
+        app.push_line(&format!("Error: {}", short_error(e)));
     }
     let lines = {
         let mut g = app.lock();
@@ -583,11 +583,11 @@ async fn run_login(app: Arc<App>, apple_id: String, password: String, save: bool
         Ok(team) => LoginView {
             phase: "done",
             message: if save {
-                format!("Accesso riuscito (team {team}). La password è salvata per i rinnovi.")
+                format!("Signed in successfully (team {team}). The password is saved for renewals.")
             } else {
                 format!(
-                    "Accesso riuscito (team {team}), ma la password non è salvata: \
-                     i rinnovi automatici non potranno partire."
+                    "Signed in successfully (team {team}), but the password was not saved: \
+                     automatic renewals cannot run."
                 )
             },
         },
@@ -640,10 +640,10 @@ fn app_views(profiles: &[profile::PhoneProfile], team: &str) -> Vec<AppView> {
 fn friendly_error(err: &str) -> String {
     let e = err.to_lowercase();
     if e.contains("manca il pairing") {
-        "Manca l'accoppiamento con l'iPhone. Va fatto una volta sola via USB (vedi la guida)."
+        "iPhone pairing is missing. Set it up once over USB (see the guide)."
             .into()
     } else if e.contains("early eof") || e.contains("pairing con l'iphone non riuscito") {
-        "L'iPhone non riconosce più l'accoppiamento: va rifatto via USB.".into()
+        "The iPhone no longer recognizes the pairing: set it up again over USB.".into()
     } else if e.contains("no route to host")
         || e.contains("hostunreachable")
         || e.contains("non risponde")
@@ -651,7 +651,7 @@ fn friendly_error(err: &str) -> String {
         || e.contains("timed out")
         || e.contains("refused")
     {
-        "Non trovo l'iPhone in rete. È acceso e collegato al Wi-Fi di casa?".into()
+        "I cannot find the iPhone on the network. Is it on and connected to your home Wi-Fi?".into()
     } else {
         short_error(err)
     }
@@ -666,14 +666,14 @@ fn short_error(err: &str) -> String {
 fn short_apple_error(err: &str) -> String {
     let e = err.to_lowercase();
     if e.contains("-20101") || e.contains("entered incorrectly") {
-        return "Apple ID o password non corretti.".into();
+        return "Incorrect Apple ID or password.".into();
     }
     if e.contains("429") || e.contains("too many requests") {
-        return "Apple sta limitando le richieste. Aspetta un po' e riprova una volta sola."
+        return "Apple is rate-limiting requests. Wait a while, then try once."
             .into();
     }
     if e.contains("aborted") || e.contains("abort") {
-        return "Accesso annullato: il codice non è arrivato in tempo.".into();
+        return "Sign-in canceled: the code did not arrive in time.".into();
     }
     let last = err
         .lines()
@@ -702,26 +702,38 @@ fn parse_history(text: &str, max: usize) -> Vec<Value> {
             let code = lines
                 .iter()
                 .rev()
-                .find_map(|l| l.strip_prefix("esito:"))
+                .find_map(|l| l.strip_prefix("esito:").or_else(|| l.strip_prefix("result:")))
                 .and_then(|c| c.trim().parse::<i32>().ok());
-            let installed = lines.iter().filter(|l| l.contains("installato sul telefono")).count();
+            let installed = lines
+                .iter()
+                .filter(|l| {
+                    l.contains("installato sul telefono") || l.contains("installed on the phone")
+                })
+                .count();
             let summary = if code.is_some_and(|c| c != 0) {
                 let last = lines
                     .iter()
                     .rev()
                     .map(|l| l.trim())
-                    .find(|l| !l.is_empty() && !l.starts_with("esito:"))
+                    .find(|l| {
+                        !l.is_empty() && !l.starts_with("esito:") && !l.starts_with("result:")
+                    })
                     .unwrap_or("errore");
                 friendly_error(last)
             } else if installed > 0 {
-                format!("Rinnovate {installed} app")
+                format!("Renewed {installed} apps")
             } else if lines
                 .iter()
-                .any(|l| l.contains("Niente da rinnovare") || l.contains("non serve rinnovare"))
+                .any(|l| {
+                    l.contains("Niente da rinnovare")
+                        || l.contains("non serve rinnovare")
+                        || l.contains("Nothing to renew")
+                        || l.contains("no renewal needed")
+                })
             {
-                "Niente da rinnovare".to_string()
+                "Nothing to renew".to_string()
             } else {
-                "Fatto".to_string()
+                "Done".to_string()
             };
             json!({ "when": when, "ok": code == Some(0), "summary": summary })
         })
@@ -748,7 +760,7 @@ fn append_log(lines: &[String], ok: bool) {
     for l in lines {
         let _ = writeln!(f, "{l}");
     }
-    let _ = writeln!(f, "esito: {}", if ok { 0 } else { 1 });
+    let _ = writeln!(f, "result: {}", if ok { 0 } else { 1 });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -850,12 +862,12 @@ mod tests {
 
     #[test]
     fn errori_in_parole_semplici() {
-        assert!(friendly_error("manca il pairing remoto rp-pairing.plist: crealo").contains("Manca"));
+        assert!(friendly_error("manca il pairing remoto rp-pairing.plist: crealo").contains("missing"));
         assert!(friendly_error("pairing con l'iPhone non riuscito (Socket(... early eof ...))")
-            .contains("non riconosce"));
+            .contains("no longer recognizes"));
         assert!(friendly_error("Os { code: 113, kind: HostUnreachable, message: \"No route to host\" }")
-            .contains("Non trovo l'iPhone"));
-        assert!(friendly_error("non trovo l'iPhone in rete: è acceso").contains("Non trovo"));
+            .contains("cannot find the iPhone"));
+        assert!(friendly_error("non trovo l'iPhone in rete: è acceso").contains("cannot find"));
         assert_eq!(friendly_error("boh"), "boh");
     }
 
@@ -863,9 +875,9 @@ mod tests {
     fn errori_di_apple_in_parole_semplici() {
         let lungo = "login Apple ID non riuscito: \n ● Failed to log in\n ● GrandSlam error\n \
                      ● Auth error -20101: Your account information was entered incorrectly.";
-        assert_eq!(short_apple_error(lungo), "Apple ID o password non corretti.");
+        assert_eq!(short_apple_error(lungo), "Incorrect Apple ID or password.");
         assert!(short_apple_error("HTTP status client error (429 Too Many Requests)")
-            .contains("limitando"));
+            .contains("rate-limiting"));
         assert_eq!(
             short_apple_error("x\n ● uno\n ● due cose non previste"),
             "due cose non previste"
@@ -894,12 +906,12 @@ esito: 0
         let h = parse_history(log, 5);
         assert_eq!(h.len(), 3);
         // dal più recente
-        assert_eq!(h[0]["summary"], "Rinnovate 2 app");
+        assert_eq!(h[0]["summary"], "Renewed 2 apps");
         assert_eq!(h[0]["ok"], true);
         assert!(h[0]["when"].as_str().unwrap().contains("interfaccia web"));
         assert_eq!(h[1]["ok"], false);
-        assert!(h[1]["summary"].as_str().unwrap().contains("Non trovo l'iPhone"));
-        assert_eq!(h[2]["summary"], "Niente da rinnovare");
+        assert!(h[1]["summary"].as_str().unwrap().contains("cannot find the iPhone"));
+        assert_eq!(h[2]["summary"], "Nothing to renew");
         assert_eq!(parse_history(log, 1).len(), 1);
         assert!(parse_history("", 5).is_empty());
         assert!(parse_history("righe senza intestazione\n", 5).is_empty());
