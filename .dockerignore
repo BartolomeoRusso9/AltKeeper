@@ -1,0 +1,21 @@
+# Fuori dalla compilazione dell'immagine: cartelle pesanti e, soprattutto, i segreti.
+target
+.git
+.DS_Store
+
+# Segreti e dati del dispositivo (gli stessi di .gitignore): mai nell'immagine.
+account.json
+state
+rp-pairing*.plist
+*.mobiledevicepairing
+*pairingFile*.plist
+pin.txt
+profili-salvati
+renew.log
+.ultimo-errore
+notify.conf
+.env
+*.p12
+*.pem
+*.key
+*.mobileprovision

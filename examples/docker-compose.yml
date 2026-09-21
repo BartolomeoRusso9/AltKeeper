@@ -1,0 +1,23 @@
+# altkeeper: interfaccia web (porta 8787) e AltServer per AltStore (porta 49500).
+# Cartella dei dati: /srv/altkeeper (pairing, account, stato, log). Metti il PIN dell'interfaccia
+# web in /srv/altkeeper/.env, una riga: ALTKEEPER_WEB_PIN=... (almeno 4 caratteri, permessi 600).
+# Rete dell'host: serve per trovare l'iPhone e per farsi trovare da AltStore via Bonjour.
+# Nessuna etichetta Watchtower: l'immagine si compila in locale, non si scarica da un registro.
+services:
+  altkeeper:
+    image: altkeeper:latest
+    container_name: altkeeper
+    restart: unless-stopped
+    network_mode: host
+    working_dir: /data
+    volumes:
+      - /srv/altkeeper:/data
+    environment:
+      - TZ=Europe/Rome
+      - ALTKEEPER_WEB_PIN=${ALTKEEPER_WEB_PIN:?imposta ALTKEEPER_WEB_PIN in .env}
+    command: ["serve", "--bind", "0.0.0.0:8787", "--altserver"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

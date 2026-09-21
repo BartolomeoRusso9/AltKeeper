@@ -1,0 +1,7 @@
+# Rinnovo dei profili dell'iPhone con altkeeper: una volta ogni sera, alle 21:17,
+# quando il telefono è di solito a casa. Rinnova solo i profili con 3 giorni o meno,
+# e accede ad Apple solo se c'è qualcosa da rinnovare.
+#
+# Per /etc/cron.d/altkeeper (con il campo utente "root"). Con `crontab -e` togli "root"
+# e metti il percorso reale della cartella di altkeeper.
+17 21 * * * root /srv/altkeeper/renew.sh

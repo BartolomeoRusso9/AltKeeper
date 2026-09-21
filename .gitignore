@@ -1,0 +1,25 @@
+# build
+/target
+
+# segreti e dati del dispositivo: mai nel repository
+rp-pairing*.plist
+*.mobiledevicepairing
+*pairingFile*.plist
+pin.txt
+account.json
+/state/
+run.log
+*.p12
+*.pem
+*.key
+*.mobileprovision
+.env
+
+# macOS
+.DS_Store
+
+# usati dagli script in examples/ (notifiche e log del rinnovo)
+notify.conf
+renew.log
+.ultimo-errore
+/profili-salvati/

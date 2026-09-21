@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>AltKeeper</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1b1f24; --muted: #5b6673; --line: #dfe3e8;
+    --accent: #0a6cff; --accent-text: #ffffff;
+    --ok: #12805c; --ok-bg: #e2f5ec; --soon: #9a6700; --soon-bg: #fff3d1;
+    --urgent: #b42318; --urgent-bg: #fde7e4; --track: #e6e9ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101418; --card: #191f26; --text: #e8ecf1; --muted: #9aa6b3; --line: #2b3440;
+      --accent: #4c9aff; --accent-text: #0b1220;
+      --ok: #4cc79b; --ok-bg: #12352a; --soon: #f0b429; --soon-bg: #3a2e0f;
+      --urgent: #ff8a7a; --urgent-bg: #3d1a17; --track: #26303b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 16px 16px 40px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; margin: 0 0 14px;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grow { flex: 1 1 auto; }
+  .pill {
+    display: inline-block; padding: 3px 11px; border-radius: 999px; font-weight: 600;
+    font-size: .9rem; background: var(--track); color: var(--muted);
+  }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.bad { background: var(--urgent-bg); color: var(--urgent); }
+  .muted { color: var(--muted); font-size: .92rem; }
+  .banner {
+    border-radius: 10px; padding: 10px 12px; margin: 10px 0 0; background: var(--soon-bg);
+    color: var(--soon); font-size: .95rem;
+  }
+  .banner.bad { background: var(--urgent-bg); color: var(--urgent); }
+  .banner.good { background: var(--ok-bg); color: var(--ok); }
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li { padding: 10px 0; border-top: 1px solid var(--line); }
+  ul.plain li:first-child { border-top: 0; padding-top: 0; }
+  .app-name { font-weight: 600; word-break: break-all; }
+  .bar { height: 8px; border-radius: 6px; background: var(--track); overflow: hidden; margin-top: 6px; }
+  .bar > span { display: block; height: 100%; border-radius: 6px; background: var(--ok); }
+  li.soon .bar > span { background: var(--soon); }
+  li.urgent .bar > span { background: var(--urgent); }
+  li.soon .when { color: var(--soon); } li.urgent .when { color: var(--urgent); }
+  button {
+    font: inherit; font-weight: 600; border-radius: 10px; padding: 10px 14px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  label { display: block; font-weight: 600; margin: 10px 0 4px; }
+  label.check { font-weight: 400; display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; }
+  input[type=text], input[type=password], input[type=email], input[type=tel] {
+    width: 100%; font: inherit; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  input.code { font-size: 1.4rem; letter-spacing: .3em; text-align: center; max-width: 12ch; }
+  pre.log {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-x: auto;
+    max-height: 240px; overflow-y: auto; margin: 10px 0 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .hist .ico { width: 1.4em; display: inline-block; }
+  [hidden] { display: none !important; }
+  footer { color: var(--muted); font-size: .85rem; text-align: center; margin-top: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AltKeeper</h1>
+  <p class="sub">Tiene in vita le app dell'iPhone rinnovando i loro profili.</p>
+
+  <div class="banner bad" id="no-pairing" hidden>
+    Manca l'accoppiamento con l'iPhone (<code>rp-pairing.plist</code>). Si fa una volta sola, con il
+    cavo USB: segui la guida nel README.
+  </div>
+
+  <section class="card" aria-live="polite">
+    <h2>iPhone</h2>
+    <div class="row">
+      <span class="pill" id="phone-pill">Controllo in corso…</span>
+      <span class="muted grow" id="phone-addr"></span>
+      <button id="btn-check" type="button">Ricontrolla</button>
+    </div>
+    <div class="banner bad" id="phone-error" hidden></div>
+  </section>
+
+  <section class="card">
+    <h2>Le tue app</h2>
+    <p class="muted" id="apps-empty" hidden></p>
+    <ul class="plain" id="apps"></ul>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="btn-due" type="button">Rinnova quelle in scadenza</button>
+      <button id="btn-all" type="button">Rinnova tutte adesso</button>
+    </div>
+    <p class="muted" id="renew-hint" style="margin:8px 0 0"></p>
+    <div id="job" hidden>
+      <div class="banner" id="job-status"></div>
+      <pre class="log" id="job-log"></pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Apple ID</h2>
+    <div id="account-info" hidden>
+      <div class="row">
+        <span class="grow"><strong id="acc-id"></strong><br><span class="muted" id="acc-pw"></span></span>
+        <button id="btn-change" type="button">Cambia account</button>
+      </div>
+    </div>
+    <form id="login-form" autocomplete="off" hidden>
+      <label for="apple-id">Apple ID (l'email)</label>
+      <input id="apple-id" type="email" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false">
+      <label for="apple-pw">Password</label>
+      <input id="apple-pw" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false">
+      <label class="check"><input type="checkbox" id="show-pw"> Mostra la password</label>
+      <label class="check"><input type="checkbox" id="save-pw" checked>
+        <span>Salva la password su questo server per i rinnovi automatici<br>
+        <span class="muted">Resta scritta in chiaro in un file riservato del server.</span></span></label>
+      <button class="primary" id="btn-login" type="submit">Accedi</button>
+      <p class="muted">Fai un solo tentativo alla volta: se sbagli spesso, Apple può bloccare gli accessi per un po'.</p>
+    </form>
+    <form id="code-form" autocomplete="off" hidden>
+      <div class="banner good">Apple ha mandato un codice a 6 cifre ai tuoi dispositivi.</div>
+      <div class="banner bad" id="code-error" hidden></div>
+      <label for="code">Codice</label>
+      <input id="code" class="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code">
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btn-code" type="submit">Invia codice</button>
+        <button id="btn-resend" type="button">Reinvia il codice</button>
+      </div>
+    </form>
+    <div class="banner" id="login-msg" hidden></div>
+  </section>
+
+  <section class="card hist">
+    <h2>Ultimi rinnovi</h2>
+    <p class="muted" id="hist-empty">Ancora niente. Il rinnovo automatico parte ogni sera, se è configurato sul server.</p>
+    <ul class="plain" id="hist"></ul>
+  </section>
+
+  <footer>Da usare solo nella rete di casa.</footer>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let state = null, showForm = false, timer = null, sending = false;
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Requested-With": "altkeeper" },
+    body: JSON.stringify(body),
+  };
+  const r = await fetch(path, opt);
+  let j = {};
+  try { j = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(j.error || ("Errore " + r.status));
+  return j;
+}
+
+function days(n) {
+  if (n < 0) return "scaduta da " + (-n) + (n === -1 ? " giorno" : " giorni");
+  if (n === 0) return "scade oggi";
+  return "scade tra " + n + (n === 1 ? " giorno" : " giorni");
+}
+
+function li(cls, ...kids) {
+  const e = document.createElement("li");
+  if (cls) e.className = cls;
+  kids.forEach((k) => e.append(k));
+  return e;
+}
+function span(text, cls) {
+  const e = document.createElement("span");
+  if (cls) e.className = cls;
+  e.textContent = text;
+  return e;
+}
+function div(cls, ...kids) {
+  const e = document.createElement("div");
+  if (cls) e.className = cls;
+  kids.forEach((k) => e.append(k));
+  return e;
+}
+
+function show(id, on) { $(id).hidden = !on; }
+function banner(id, text, cls) {
+  const e = $(id);
+  e.className = "banner" + (cls ? " " + cls : "");
+  e.textContent = text || "";
+  e.hidden = !text;
+}
+
+function render(s) {
+  state = s;
+  show("no-pairing", !s.pairing);
+
+  // iPhone
+  const pill = $("phone-pill"), p = s.phone;
+  if (p.checking) { pill.textContent = "Controllo in corso…"; pill.className = "pill"; }
+  else if (p.reachable === true) { pill.textContent = "iPhone raggiungibile"; pill.className = "pill ok"; }
+  else if (p.reachable === false) { pill.textContent = "iPhone non raggiungibile"; pill.className = "pill bad"; }
+  else { pill.textContent = "Non ancora controllato"; pill.className = "pill"; }
+  $("phone-addr").textContent = p.reachable && p.address ? p.address : "";
+  const err = p.reachable === false ? p.error : "";
+  banner("phone-error", err, "bad");
+  $("phone-error").title = p.detail || "";
+
+  // App
+  const ul = $("apps");
+  ul.replaceChildren();
+  s.apps.forEach((a) => {
+    const pct = Math.max(4, Math.min(100, Math.round((Math.max(a.days, 0) / 7) * 100)));
+    const bar = div("bar", span(""));
+    bar.firstChild.style.width = pct + "%";
+    ul.append(li(a.level,
+      div("app-name", document.createTextNode(a.label)),
+      div("muted", span(days(a.days), "when"), document.createTextNode(" · " + a.expires.slice(0, 10))),
+      bar));
+  });
+  const empty = $("apps-empty");
+  if (!s.account.present) { empty.textContent = "Accedi con il tuo Apple ID per vedere le app."; empty.hidden = false; }
+  else if (p.reachable === false) { empty.textContent = "Non posso leggere le app finché l'iPhone non è raggiungibile."; empty.hidden = false; }
+  else if (!s.apps.length && p.reachable === true) { empty.textContent = "Nessuna app trovata per questo Apple ID."; empty.hidden = false; }
+  else { empty.hidden = true; }
+
+  // Pulsanti di rinnovo
+  const canRenew = s.account.present && s.account.password_saved && s.account.team && !s.busy;
+  $("btn-due").disabled = !canRenew;
+  $("btn-all").disabled = !canRenew;
+  $("btn-check").disabled = s.busy;
+  $("renew-hint").textContent = !s.account.present ? "Serve prima l'accesso con l'Apple ID."
+    : !s.account.password_saved ? "Per rinnovare la password deve essere salvata: rifai l'accesso e lascia la casella spuntata."
+    : s.busy ? "Sto lavorando…" : "";
+
+  // Lavoro in corso o appena finito
+  const job = s.job;
+  show("job", !!job.kind);
+  if (job.kind) {
+    const st = $("job-status");
+    if (job.running) { st.className = "banner"; st.textContent = "Rinnovo in corso, non chiudere la pagina finché non finisce…"; }
+    else if (job.ok) { st.className = "banner good"; st.textContent = "Finito."; }
+    else { st.className = "banner bad"; st.textContent = "Non è andata a buon fine. Guarda l'ultima riga."; }
+    const log = $("job-log");
+    const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+    log.textContent = job.lines.join("\n");
+    if (atEnd) log.scrollTop = log.scrollHeight;
+  }
+
+  // Apple ID
+  const phase = s.login.phase;
+  const working = phase === "working", needs = phase === "needs_code";
+  show("account-info", s.account.present && !showForm && !working && !needs);
+  if (s.account.present) {
+    $("acc-id").textContent = s.account.apple_id || "";
+    $("acc-pw").textContent = s.account.password_saved ? "Password salvata per i rinnovi automatici" : "Password non salvata";
+  }
+  show("login-form", (!s.account.present || showForm || working || phase === "failed") && !needs);
+  $("btn-login").disabled = working || sending || (s.busy && !working);
+  $("btn-login").textContent = working ? "Accesso in corso…" : "Accedi";
+  show("code-form", needs);
+  banner("code-error", needs ? s.login.code_error : "", "bad");
+  banner("login-msg", phase === "done" || phase === "failed" ? s.login.message : "",
+         phase === "done" ? "good" : "bad");
+  if (phase === "done" && showForm) showForm = false;
+
+  // Storico
+  const hist = $("hist");
+  hist.replaceChildren();
+  s.history.forEach((h) => {
+    hist.append(li("", div("", span(h.ok ? "✓" : "✗", "ico"), document.createTextNode(h.summary)),
+      div("muted", document.createTextNode(h.when))));
+  });
+  $("hist-empty").hidden = s.history.length > 0;
+}
+
+async function refresh() {
+  clearTimeout(timer);
+  let fast = false;
+  try {
+    render(await api("/api/state"));
+    fast = state.busy || state.phone.checking || state.login.phase === "working" ||
+           state.login.phase === "needs_code" || state.job.running;
+  } catch (e) {
+    banner("phone-error", "Non riesco a parlare col server: " + e.message, "bad");
+  }
+  timer = setTimeout(refresh, fast ? 1500 : 15000);
+}
+
+async function act(fn, errId) {
+  try { await fn(); } catch (e) { banner(errId || "phone-error", e.message, "bad"); }
+  refresh();
+}
+
+$("btn-check").onclick = () => act(() => api("/api/check", {}));
+$("btn-due").onclick = () => act(() => api("/api/renew", { mode: "due" }));
+$("btn-all").onclick = () => {
+  if (confirm("Rinnovare tutte le app adesso? Servono circa un minuto e non serve farlo spesso.")) {
+    act(() => api("/api/renew", { mode: "now" }));
+  }
+};
+$("btn-change").onclick = () => { showForm = true; if (state) render(state); $("apple-id").focus(); };
+$("show-pw").onchange = (e) => { $("apple-pw").type = e.target.checked ? "text" : "password"; };
+
+$("login-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  sending = true; $("btn-login").disabled = true;
+  try {
+    await api("/api/login", {
+      apple_id: $("apple-id").value, password: $("apple-pw").value,
+      save_password: $("save-pw").checked,
+    });
+    $("apple-pw").value = "";
+  } catch (e) { banner("login-msg", e.message, "bad"); }
+  sending = false;
+  refresh();
+};
+
+$("code-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  try { await api("/api/login/code", { code: $("code").value }); $("code").value = ""; }
+  catch (e) { banner("code-error", e.message, "bad"); }
+  refresh();
+};
+$("btn-resend").onclick = () => act(() => api("/api/login/resend", {}), "code-error");
+
+refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,386 @@
+//! altkeeper: rinnova via Wi-Fi i profili di provisioning delle app installate
+//! con un Apple ID gratuito, senza computer collegato e senza VPN.
+//!
+//!   altkeeper phone [--phone ip:porta]            legge i profili dal telefono
+//!   altkeeper pair-usb [file]                     crea il pairing remoto via USB
+//!   altkeeper login <apple-id>                    accede e salva l'account
+//!   altkeeper apps                                elenca App ID e scadenze
+//!   altkeeper renew [--phone ip:porta] [--dry-run] [--force] [--min-days N]
+//!   altkeeper profile-remove <uuid> [--phone ip:porta]   toglie un profilo (ne salva prima una copia)
+//!   altkeeper profile-restore <file> [--phone ip:porta]  rimette un profilo salvato
+//!   altkeeper serve [--bind ip:porta] [--pin PIN] [--dir cartella] [--phone ip:porta]
+//!                    [--altserver] [--altserver-port N]
+//!                                                  interfaccia web (stato, rinnovo, accesso Apple ID)
+//!   altkeeper altserver [--port N] [--dir cartella] [--phone ip:porta]
+//!                                                  fa da AltServer per AltStore (Refresh All e installazioni)
+//!
+//! Se non indichi il telefono (`--phone` o ALTKEEPER_PHONE) lo cerca in rete via Bonjour.
+
+mod altserver;
+mod apple;
+mod env;
+mod phone;
+mod profile;
+mod web;
+
+use std::net::SocketAddr;
+use std::path::Path;
+
+use phone::dbg;
+
+const PAIRING_FILE: &str = "rp-pairing.plist";
+
+const USAGE: &str = "uso: altkeeper <phone|pair-usb|login|apps|renew|profile-remove|\
+                     profile-restore|serve|altserver|version> [opzioni]";
+
+/// Dove `profile-remove` tiene la copia dei profili tolti dal telefono.
+const SAVED_DIR: &str = "profili-salvati";
+
+/// Indirizzo del servizio `_remotepairing._tcp` dell'iPhone (di solito porta 49152):
+/// da `--phone ip:porta` oppure dalla variabile d'ambiente ALTKEEPER_PHONE. Se manca non è
+/// un errore: il telefono si cerca in rete.
+fn phone_addr(opt: Option<String>) -> Result<Option<SocketAddr>, String> {
+    opt.or_else(|| env::var("PHONE"))
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| {
+            s.trim()
+                .parse()
+                .map_err(|e| format!("indirizzo del telefono non valido: {e}"))
+        })
+        .transpose()
+}
+
+/// Porta su cui ascolta AltServer: `--altserver-port`/`--port`, altrimenti 49500.
+fn altserver_port(opt: Option<String>) -> Result<u16, String> {
+    opt.map(|v| v.parse::<u16>().map_err(|e| format!("porta non valida: {e}")))
+        .transpose()
+        .map(|p| p.unwrap_or(49500))
+}
+
+/// Si collega al telefono, all'indirizzo indicato o a quello trovato in rete.
+async fn open_phone(
+    addr: Option<SocketAddr>,
+    say: &mut dyn FnMut(&str),
+) -> Result<phone::PhoneLink, String> {
+    let (found, link) = phone::connect_auto(addr, PAIRING_FILE, &mut *say).await?;
+    if addr != Some(found) {
+        say(&format!("Telefono trovato a {found}"));
+    }
+    Ok(link)
+}
+
+/// Legge e interpreta tutti i profili presenti sul telefono.
+async fn phone_profiles(
+    link: &mut phone::PhoneLink,
+) -> Result<Vec<profile::PhoneProfile>, String> {
+    let raw = link.misagent.copy_all().await.map_err(dbg)?;
+    Ok(raw.iter().filter_map(|r| profile::parse(r)).collect())
+}
+
+fn profile_line(p: &profile::PhoneProfile) -> String {
+    format!(
+        "   {}  [{}]  scade {} ({} giorni)",
+        p.name,
+        p.uuid,
+        p.expires_text(),
+        p.days_left().map(|d| d.to_string()).unwrap_or("?".into())
+    )
+}
+
+fn print_profile(p: &profile::PhoneProfile) {
+    println!("{}", profile_line(p));
+}
+
+async fn cmd_phone(addr: Option<SocketAddr>) -> Result<(), String> {
+    let mut link = open_phone(addr, &mut |s| println!("{s}")).await?;
+    let profiles = phone_profiles(&mut link).await?;
+    println!("{} profili installati sul telefono:", profiles.len());
+    profiles.iter().for_each(print_profile);
+    Ok(())
+}
+
+async fn cmd_login(apple_id: Option<String>) -> Result<(), String> {
+    let apple_id = apple_id.ok_or("uso: altkeeper login <apple-id>")?;
+    print!("Password di {apple_id} (si vede mentre scrivi): ");
+    std::io::Write::flush(&mut std::io::stdout()).map_err(dbg)?;
+    let mut password = String::new();
+    std::io::stdin().read_line(&mut password).map_err(dbg)?;
+    let password = password.trim().to_string();
+    if password.is_empty() {
+        return Err("password vuota".into());
+    }
+
+    apple::set_interactive(true);
+    let mut sess = apple::open_session(Path::new("."), &apple_id, &password).await?;
+    let team = apple::pick_team(&mut sess, None, true).await?;
+    println!(
+        "Accesso riuscito. Team: {} ({})",
+        team.name.as_deref().unwrap_or("<senza nome>"),
+        team.team_id
+    );
+
+    print!(
+        "Salvare la password su questo server per i rinnovi automatici (file riservato a root)? [s/N] "
+    );
+    std::io::Write::flush(&mut std::io::stdout()).ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer).ok();
+    let save = matches!(answer.trim().to_lowercase().as_str(), "s" | "si" | "sì" | "y");
+
+    apple::save_account(
+        Path::new("."),
+        &apple::Account {
+            apple_id,
+            password: if save { password } else { String::new() },
+            team_id: Some(team.team_id),
+        },
+    )?;
+    println!("Account salvato in account.json (permessi 600).");
+    Ok(())
+}
+
+async fn cmd_apps() -> Result<(), String> {
+    let acc = apple::load_account(Path::new("."))?;
+    apple::set_interactive(false);
+    let mut sess = apple::open_session(Path::new("."), &acc.apple_id, &acc.password).await?;
+    let team = apple::pick_team(&mut sess, acc.team_id.as_deref(), false).await?;
+    let ids = apple::app_ids(&mut sess, &team).await?;
+    println!("Team {}: {} App ID", team.team_id, ids.len());
+    for a in &ids {
+        let exp = a
+            .expiration_date
+            .map(|d| d.to_xml_format())
+            .unwrap_or_else(|| "-".into());
+        println!("   {}  ({})  scade {}", a.identifier, a.name, exp);
+    }
+    Ok(())
+}
+
+async fn cmd_renew(
+    addr: Option<SocketAddr>,
+    dry_run: bool,
+    force: bool,
+    min_days: i64,
+    say: &mut dyn FnMut(&str),
+) -> Result<(), String> {
+    let acc = apple::load_account(Path::new("."))?;
+    let team_id = acc.team_id.clone().ok_or("team non salvato: rifai il login")?;
+
+    say("Collegamento al telefono...");
+    let mut link = open_phone(addr, &mut *say).await?;
+    let profiles = phone_profiles(&mut link).await?;
+    let mine: Vec<&profile::PhoneProfile> = profiles
+        .iter()
+        .filter(|p| p.team_id.as_deref() == Some(team_id.as_str()))
+        .collect();
+    say(&format!(
+        "{} profili sul telefono, {} del team {team_id}",
+        profiles.len(),
+        mine.len()
+    ));
+    if mine.is_empty() {
+        return Ok(());
+    }
+
+    // Dopo un rinnovo i profili vecchi restano sul telefono: per ogni bundle vale quello che
+    // scade più tardi, e si rinnova una volta sola (altrimenti ogni giro rifarebbe il rinnovo
+    // finché il profilo vecchio non scade).
+    let latest = profile::latest_by_bundle(mine);
+
+    // Si decide cosa rinnovare prima di parlare con Apple: se niente è in scadenza non si
+    // accede affatto (meno login, meno rischio che Apple limiti le richieste).
+    let mut due: Vec<(&str, i64)> = Vec::new();
+    for p in latest {
+        let Some(bundle) = p.bundle_id.as_deref() else {
+            say(&format!("   {}: bundle ID non leggibile, salto", p.name));
+            continue;
+        };
+        let days = p.days_left().unwrap_or(-1);
+        if !force && days > min_days {
+            say(&format!("   {bundle}: scade tra {days} giorni, non serve rinnovare"));
+            continue;
+        }
+        due.push((bundle, days));
+    }
+    if due.is_empty() {
+        say("Niente da rinnovare: non accedo ad Apple.");
+        return Ok(());
+    }
+
+    say("Accesso ad Apple...");
+    apple::set_interactive(false);
+    let mut sess = apple::open_session(Path::new("."), &acc.apple_id, &acc.password).await?;
+    let team = apple::pick_team(&mut sess, Some(&team_id), false).await?;
+    let ids = apple::app_ids(&mut sess, &team).await?;
+
+    let mut done = 0;
+    for (bundle, days) in due {
+        let Some(app) = ids.iter().find(|a| a.identifier == bundle) else {
+            say(&format!("   {bundle}: nessun App ID corrispondente su Apple, salto"));
+            continue;
+        };
+        if dry_run {
+            say(&format!("   {bundle}: scade tra {days} giorni, RINNOVEREI (prova a vuoto)"));
+            continue;
+        }
+        say(&format!("   {bundle}: scade tra {days} giorni, scarico un profilo nuovo..."));
+        let new = apple::download_profile(&mut sess, &team, app).await?;
+        say(&format!("      nuovo profilo valido fino al {}", new.date_expire.to_xml_format()));
+        let bytes: Vec<u8> = new.encoded_profile.into();
+        link.misagent.install(bytes).await.map_err(dbg)?;
+        say("      installato sul telefono");
+        done += 1;
+    }
+
+    if !dry_run && done > 0 {
+        say("Controllo finale sul telefono:");
+        let after = phone_profiles(&mut link).await?;
+        for p in after.iter().filter(|p| p.team_id.as_deref() == Some(team_id.as_str())) {
+            say(&profile_line(p));
+        }
+    }
+    Ok(())
+}
+
+/// Toglie dal telefono il profilo con questo UUID, dopo averne salvato e riletto una copia in
+/// `profili-salvati/` (si rimette con `profile-restore`). Serve a capire se iOS accetta i
+/// profili nuovi per un'app installata con quello originale.
+async fn cmd_profile_remove(addr: Option<SocketAddr>, uuid: Option<String>) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let uuid = uuid.ok_or("uso: altkeeper profile-remove <uuid>")?;
+    let mut link = open_phone(addr, &mut |s| println!("{s}")).await?;
+    let raw = link.misagent.copy_all().await.map_err(dbg)?;
+    let (found, parsed) = raw
+        .iter()
+        .find_map(|r| {
+            profile::parse(r)
+                .filter(|p| p.uuid.eq_ignore_ascii_case(&uuid))
+                .map(|p| (r, p))
+        })
+        .ok_or("profilo non trovato sul telefono")?;
+
+    std::fs::create_dir_all(SAVED_DIR).map_err(dbg)?;
+    std::fs::set_permissions(SAVED_DIR, std::fs::Permissions::from_mode(0o700)).map_err(dbg)?;
+    let path = format!("{SAVED_DIR}/{}.mobileprovision", parsed.uuid);
+    std::fs::write(&path, found).map_err(dbg)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(dbg)?;
+    if std::fs::read(&path).map_err(dbg)? != *found {
+        return Err(format!("la copia in {path} non coincide: non tolgo niente"));
+    }
+    println!("Copia salvata in {path}");
+
+    link.misagent.remove(&parsed.uuid).await.map_err(dbg)?;
+    println!("Tolto dal telefono: {}  [{}]", parsed.name, parsed.uuid);
+    Ok(())
+}
+
+/// Rimette sul telefono un profilo salvato da `profile-remove`.
+async fn cmd_profile_restore(addr: Option<SocketAddr>, file: Option<String>) -> Result<(), String> {
+    let file = file.ok_or("uso: altkeeper profile-restore <file>")?;
+    let bytes = std::fs::read(&file).map_err(dbg)?;
+    let parsed = profile::parse(&bytes).ok_or("il file non è un profilo valido")?;
+    let mut link = open_phone(addr, &mut |s| println!("{s}")).await?;
+    link.misagent.install(bytes).await.map_err(dbg)?;
+    println!("Rimesso sul telefono: {}  [{}]", parsed.name, parsed.uuid);
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), String> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
+    isideload::init().map_err(dbg)?;
+    // RUST_LOG=debug mostra i messaggi delle librerie. Attenzione: a livello debug
+    // idevice stampa anche le chiavi del pairing: non usarlo su log condivisi.
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        return Err(USAGE.into());
+    }
+    let cmd = args.remove(0);
+    let flag = |name: &str| args.iter().any(|a| a == name);
+    let opt = |name: &str| {
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+
+    match cmd.as_str() {
+        "version" | "--version" | "-V" => {
+            println!("altkeeper {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        "phone" => cmd_phone(phone_addr(opt("--phone"))?).await,
+        "pair-usb" => {
+            let out = args.first().cloned().unwrap_or_else(|| PAIRING_FILE.into());
+            phone::pair_usb(&out).await?;
+            println!("pairing remoto creato e salvato in {out}");
+            Ok(())
+        }
+        "login" => cmd_login(args.first().cloned()).await,
+        "apps" => cmd_apps().await,
+        "renew" => {
+            let min_days = opt("--min-days")
+                .map(|v| v.parse::<i64>().map_err(|e| format!("--min-days non valido: {e}")))
+                .transpose()?
+                .unwrap_or(3);
+            cmd_renew(
+                phone_addr(opt("--phone"))?,
+                flag("--dry-run"),
+                flag("--force"),
+                min_days,
+                &mut |s| println!("{s}"),
+            )
+            .await
+        }
+        "serve" => {
+            let bind: SocketAddr = opt("--bind")
+                .unwrap_or_else(|| "127.0.0.1:8787".into())
+                .parse()
+                .map_err(|e| format!("--bind non valido (serve ip:porta): {e}"))?;
+            // Meglio la variabile d'ambiente: un PIN sulla riga di comando si vede con `ps`.
+            let pin = opt("--pin")
+                .or_else(|| env::var("WEB_PIN"))
+                .filter(|p| !p.is_empty());
+            if let Some(dir) = opt("--dir") {
+                std::env::set_current_dir(&dir).map_err(|e| format!("--dir {dir}: {e}"))?;
+            }
+            let phone = phone_addr(opt("--phone"))?;
+            web::check_options(bind, &pin)?;
+            apple::anisette_url(env::var("ANISETTE_URL").as_deref())?;
+            if flag("--altserver") {
+                altserver::start(altserver_port(opt("--altserver-port"))?, phone)?;
+            }
+            web::serve(bind, pin, phone).await
+        }
+        "altserver" => {
+            if let Some(dir) = opt("--dir") {
+                std::env::set_current_dir(&dir).map_err(|e| format!("--dir {dir}: {e}"))?;
+            }
+            apple::anisette_url(env::var("ANISETTE_URL").as_deref())?;
+            altserver::start(altserver_port(opt("--port"))?, phone_addr(opt("--phone"))?)?;
+            println!("AltServer attivo. Ctrl-C per fermarlo.");
+            let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .map_err(dbg)?;
+            tokio::select! {
+                r = tokio::signal::ctrl_c() => r.map_err(dbg)?,
+                _ = term.recv() => {}
+            }
+            altserver::stop();
+            Ok(())
+        }
+        "profile-remove" => {
+            cmd_profile_remove(phone_addr(opt("--phone"))?, args.first().cloned()).await
+        }
+        "profile-restore" => {
+            cmd_profile_restore(phone_addr(opt("--phone"))?, args.first().cloned()).await
+        }
+        _ => Err(USAGE.into()),
+    }
+}

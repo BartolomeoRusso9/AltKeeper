@@ -1,0 +1,52 @@
+name: Bug report
+description: Something does not work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste your Apple ID password, `account.json`, `rp-pairing.plist` or your ntfy topic.**
+        Do not use `RUST_LOG=debug` for the logs you attach: `idevice` prints the pairing keys at
+        that level.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it fail?
+      options:
+        - Sign-in (login / verification code)
+        - Renewing profiles (renew / cron)
+        - AltStore Refresh All
+        - Installing or removing an app from AltStore
+        - Finding the iPhone (Bonjour / scan)
+        - Web page
+        - Docker image
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: With `ALTKEEPER_DEBUG=1` a failed sign-in prints the lines starting with `[gs #`. Remove anything private.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version (`altkeeper --version`) or image tag
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Machine, OS and how you run it
+      placeholder: "Debian 13 x86-64, Docker, host network"
+  - type: input
+    id: phone
+    attributes:
+      label: iPhone model, iOS version, AltStore version
