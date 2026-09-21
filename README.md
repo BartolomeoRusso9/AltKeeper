@@ -3,8 +3,6 @@
 **AltServer for iOS 17+ that runs on your home server (Docker).** Refresh and install your
 AltStore / SideStore-style apps over Wi-Fi, with no computer left on and no VPN.
 
-[Italiano](README.it.md)
-
 Keeps sideloaded iPhone apps alive. Apps installed with a **free Apple ID** stop opening after
 7 days unless their *provisioning profile* is renewed. AltKeeper runs on a small always-on
 machine at home and does it over Wi-Fi, with **no computer plugged in, no AltServer on a
@@ -15,7 +13,7 @@ computer and no VPN on the phone**. It can work in two ways, together or separat
 - **On its own**: it renews the profiles by itself every evening (cron), even if AltStore is
   never opened.
 
-There is also a small **web page** to see the state of your apps and renew them (in Italian):
+There is also a small **web page** to see the state of your apps and renew them:
 
 <img src="docs/screenshots/web.png" alt="AltKeeper web page: iPhone reachable, three apps with their expiry, renew buttons" width="320">
 
@@ -23,7 +21,7 @@ There is also a small **web page** to see the state of your apps and renew them 
 > version at the time of writing), running on a Mac and, for the unattended renewal, on a Debian 13
 > server (x86-64). It relies on private Apple APIs and on AltStore's own protocol, which can
 > change without notice. For personal use with your own Apple ID; not affiliated with Apple or
-> AltStore. Command-line messages and code comments are in Italian.
+> AltStore. Some command-line messages and code comments are localized to the original project language.
 >
 > Confirmed (AltServer running on a Mac): *Refresh* from AltStore installs the new profile on the
 > iPhone, and installing an app (about 126 MB) from AltStore works. Confirmed earlier: sign-in,
@@ -37,7 +35,7 @@ There is also a small **web page** to see the state of your apps and renew them 
   sends it). It does not re-sign apps and **never creates or revokes certificates**.
 - **AltServer mode does not need your Apple ID on the server.** AltStore signs in on the iPhone;
   this program only gives it anisette data and installs what AltStore sends. The unattended renewal
-  (`renew`, cron, the web page's "Rinnova") does need the Apple ID and its password on the server.
+  (`renew`, cron, and the web page's renew action) does need the Apple ID and its password on the server.
 - The two do not clash: `renew` looks at the newest profile on the phone. If AltStore renewed
   recently, `renew` does nothing and does not even sign in to Apple.
 - Old profiles stay on the phone after a renewal (iOS does not remove them), so you will see
@@ -189,13 +187,13 @@ ALTKEEPER_WEB_PIN=123456 ./altkeeper serve --bind 0.0.0.0:8787 --altserver
 ```
 
 Open `http://<server>:8787` (any user name, the PIN as password). It shows whether the iPhone is
-reachable and the apps with the days left, lets you renew them ("Rinnova quelle in scadenza" or "Rinnova
-tutte adesso", with a live log), sign in with your Apple ID (the 2FA code is typed in the browser)
-and see the latest renewals from `renew.log`. Without `--bind`, or with a loopback address, it
-listens only on the machine itself and needs no PIN; on any other address it **refuses to start
-without a PIN** (at least 4 characters). Use the environment variable rather than `--pin`, which is
-visible in `ps`. The page is in Italian and there is no HTTPS: keep it inside your home network.
-The web page's own sign-in and renew were not run against Apple yet.
+reachable and the apps with the days left, lets you renew them ("Renew expiring apps" or "Renew all
+now", with a live log), sign in with your Apple ID (the 2FA code is typed in the browser) and see
+the latest renewals from `renew.log`. Without `--bind`, or with a loopback address, it listens only
+on the machine itself and needs no PIN; on any other address it **refuses to start without a PIN**
+(at least 4 characters). Use the environment variable rather than `--pin`, which is visible in `ps`.
+The web page has no HTTPS: keep it inside your home network. The web page's own sign-in and renew
+were not run against Apple yet.
 
 ### 9. Docker
 
@@ -240,13 +238,13 @@ The project used to be called altrefresh: the old `ALTREFRESH_*` variable names 
 
 ## If something goes wrong
 
-- **"manca il pairing remoto"**: there is no `rp-pairing.plist` in the folder. Pair again (step 3).
-- **"pairing con l'iPhone non riuscito" / `early eof`**: the iPhone no longer recognises that
-  pairing. Pair again, or copy a working `rp-pairing.plist` from another computer.
-- **"non trovo l'iPhone in rete", "No route to host", timeouts**: the iPhone is not on the network
-  (asleep, away). If you gave an address that is no longer right, the program looks for the phone
-  by itself; if you want a fixed address, on the iPhone open Settings, Wi-Fi, the (i) of your
-  network, and set the private Wi-Fi address to **Fixed** or off (the wording depends on the iOS
+- **"remote pairing is missing"**: there is no `rp-pairing.plist` in the folder. Pair again (step 3).
+- **"phone pairing failed" / `early eof`**: the iPhone no longer recognises that pairing. Pair
+  again, or copy a working `rp-pairing.plist` from another computer.
+- **"cannot find the iPhone on the network", "No route to host", timeouts**: the iPhone is not on
+  the network (asleep, away). If you gave an address that is no longer right, the program looks for
+  the phone by itself; if you want a fixed address, on the iPhone open Settings, Wi‑Fi, the (i) of
+  your network, and set the private Wi‑Fi address to **Fixed** or off (the wording depends on the iOS
   version), then give the iPhone a fixed IP in your router.
 - **AltStore says "AltServer could not be found"**: see step 4. Check that the server is running, on
   the same network, that AltStore has the Local Network permission, and read the server's output.
