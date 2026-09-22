@@ -22,6 +22,9 @@ const TYPE_SRV: u16 = 33;
 const TYPE_ANY: u16 = 255;
 const CLASS_IN: u16 = 1;
 
+/// Bandierina "risposta troncata": dice al client di riprovare in TCP.
+const FLAG_TRUNCATED: u16 = 0x0200;
+
 const RCODE_OK: u16 = 0;
 const RCODE_NXDOMAIN: u16 = 3;
 
@@ -58,7 +61,13 @@ impl Zone {
         clients: (Ipv4Addr, u8),
     ) -> Self {
         let domain = domain.trim_matches('.').to_ascii_lowercase();
-        let short = &id[..id.len().min(8)];
+        // Ogni nome in arrivo viene messo in minuscolo quando lo leggiamo, quindi anche i nostri
+        // devono esserlo: un nome host con le maiuscole farebbe fallire il confronto e il server
+        // risponderebbe "non esiste" per il proprio servizio.
+        let instance = instance.to_ascii_lowercase();
+        // Stesso motivo: l'id di solito è minuscolo, ma può arrivare da un file scritto a
+        // mano. Il serverID nel record TXT resta com'è, lì le maiuscole contano.
+        let short = id[..id.len().min(8)].to_ascii_lowercase();
         Self {
             browse: format!("_altserver._tcp.{domain}"),
             instance: format!("{instance}._altserver._tcp.{domain}"),
@@ -213,10 +222,12 @@ fn handle(zone: &Zone, query: &[u8]) -> Option<Vec<u8>> {
     let records = answers.unwrap_or_default();
 
     let mut out = build_reply(&q, rcode, &records);
-    // Se fossimo andati oltre il limite UDP, meglio una risposta vuota che un messaggio
-    // tagliato a metà: il client riproverà.
+    // Oltre il limite UDP si manda una risposta vuota ma con la bandierina "troncata": senza,
+    // il client la leggerebbe come "questi record non esistono" e si fermerebbe, invece di
+    // riprovare in TCP.
     if out.len() > MAX_REPLY {
         out = build_reply(&q, RCODE_OK, &[]);
+        out[2] |= (FLAG_TRUNCATED >> 8) as u8;
     }
     Some(out)
 }
@@ -486,6 +497,64 @@ mod tests {
             let msg = risposta(nome, TYPE_PTR);
             assert_eq!(rcode(&msg), RCODE_NXDOMAIN, "{nome}");
         }
+    }
+
+    #[test]
+    fn il_nome_istanza_con_le_maiuscole_si_trova_lo_stesso() {
+        // Un nome host con le maiuscole non deve impedire al server di trovare se stesso.
+        let z = Zone::new(
+            "casa.internal",
+            "AltKeeper-Casa2",
+            "8e68e3c9e57288e9f7260efb6ea76c93",
+            49500,
+            Ipv4Addr::new(10, 0, 0, 5),
+            (Ipv4Addr::new(10, 0, 0, 0), 24),
+        );
+        assert_eq!(z.instance, "altkeeper-casa2._altserver._tcp.casa.internal");
+        let msg = handle(&z, &domanda("altkeeper-casa2._altserver._tcp.casa.internal", TYPE_SRV))
+            .expect("nessuna risposta");
+        assert_eq!(conta_risposte(&msg), 1);
+    }
+
+    #[test]
+    fn un_serverid_con_le_maiuscole_non_rompe_il_nome_host() {
+        let z = Zone::new(
+            "casa.internal",
+            "altkeeper-casa2",
+            "8E68E3C9E57288E9F7260EFB6EA76C93",
+            49500,
+            Ipv4Addr::new(10, 0, 0, 5),
+            (Ipv4Addr::new(10, 0, 0, 0), 24),
+        );
+        let msg = handle(&z, &domanda("altkeeper-8e68e3c9.casa.internal", TYPE_A))
+            .expect("nessuna risposta");
+        assert_eq!(conta_risposte(&msg), 1);
+        // Nel TXT il serverID deve restare come l'utente l'ha scritto.
+        let txt = handle(&z, &domanda("altkeeper-casa2._altserver._tcp.casa.internal", TYPE_TXT))
+            .expect("nessuna risposta");
+        assert!(String::from_utf8_lossy(&txt).contains("serverID=8E68E3C9"));
+    }
+
+    #[test]
+    fn una_risposta_troppo_grande_viene_segnalata_come_troncata() {
+        // Con un dominio lunghissimo la risposta supera il limite UDP: deve tornare vuota ma
+        // con la bandierina di troncamento, cosi il client riprova in TCP.
+        let lungo = ["abcdefghijklmnopqrstuvwxyz012345678901234567890123456789012"; 4].join(".");
+        let z = Zone::new(
+            &lungo,
+            "altkeeper-casa2",
+            "8e68e3c9e57288e9f7260efb6ea76c93",
+            49500,
+            Ipv4Addr::new(10, 0, 0, 5),
+            (Ipv4Addr::new(10, 0, 0, 0), 24),
+        );
+        let nome = format!("altkeeper-casa2._altserver._tcp.{lungo}");
+        let msg = handle(&z, &domanda(&nome, TYPE_ANY)).expect("nessuna risposta");
+        let flags = u16::from_be_bytes([msg[2], msg[3]]);
+        assert_ne!(flags & FLAG_TRUNCATED, 0, "manca la bandierina di troncamento");
+        assert_eq!(rcode(&msg), RCODE_OK);
+        assert_eq!(conta_risposte(&msg), 0);
+        assert!(msg.len() <= MAX_REPLY);
     }
 
     #[test]
