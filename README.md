@@ -213,6 +213,51 @@ A GitHub Actions workflow (`.github/workflows/docker.yml`) runs the tests and pu
 to `ghcr.io/<user>/altkeeper` on pushes to `main` (amd64) and on `vX.Y.Z` tags (amd64 and
 arm64). It has not been run on GitHub yet. If the repository is private the package is private too.
 
+## Using it from outside your home network
+
+AltStore finds servers with Bonjour, which normally means multicast — and **iOS never sends
+multicast discovery over a VPN interface**. That is why simply installing Tailscale or ZeroTier
+is not enough on its own: the phone never even asks.
+
+There is a way around it. Bonjour has a second, older mode: **unicast DNS-SD**, where services
+are published as ordinary DNS records. AltStore browses with an empty domain, which means "all
+default domains" — including the search domains configured on the device. So if you publish the
+service as real DNS records and give the phone that domain, AltStore finds it with plain DNS
+queries, and those travel through a VPN without trouble.
+
+AltKeeper can serve those records itself:
+
+```
+altkeeper altserver --dns-domain home.internal --dns-address 10.6.0.1
+```
+
+`--dns-address` is the address the phone should connect to — normally this machine's address
+**on the VPN**, not its LAN address. The responder listens on UDP 5533 by default
+(`--dns-port` to change it); it only answers for its own names and forwards nothing.
+
+Then make that domain resolvable for the phone. Most people already run a resolver, so point
+just that one domain at AltKeeper. With AdGuard Home, add to *Upstream DNS servers*:
+
+```
+[/home.internal/]127.0.0.1:5533
+```
+
+dnsmasq: `server=/home.internal/127.0.0.1#5533`. Pi-hole and Unbound have equivalents.
+
+Finally the phone needs that DNS server and that search domain. Either push both from the VPN
+(WireGuard's iOS app has fields for DNS servers and search domains; ZeroTier has it too, on paid
+plans), or set them by hand per Wi-Fi network in iOS Settings → Wi-Fi → (i) → Configure DNS →
+Manual.
+
+With that in place, *Refresh All* and app installs work from anywhere the phone can reach the
+VPN. Two caveats worth knowing:
+
+- The phone must be on **Wi-Fi**. iOS only runs the pairing service it needs for this while
+  connected to a Wi-Fi network; on cellular alone it is not listening at all.
+- Keep the VPN tunnel healthy. On iOS, VPN apps get suspended in the background and the tunnel
+  can go stale after a network change, so a scheduled unattended renewal over it is not
+  something to rely on yet.
+
 ## Commands
 
 | Command | What it does |
@@ -222,7 +267,7 @@ arm64). It has not been run on GitHub yet. If the repository is private the pack
 | `login <apple-id>` | signs in with 2FA and saves the account |
 | `apps` | lists your App IDs and their expiry dates |
 | `renew [--dry-run] [--force] [--min-days N] [--phone ip:port]` | renews the profiles that are due |
-| `altserver [--port N] [--dir folder] [--phone ip:port]` | acts as AltServer for AltStore |
+| `altserver [--port N] [--dir folder] [--phone ip:port] [--dns-domain D --dns-address IP]` | acts as AltServer for AltStore |
 | `serve [--bind ip:port] [--pin PIN] [--dir folder] [--phone ip:port] [--altserver] [--altserver-port N]` | web page (and, with `--altserver`, AltServer) |
 | `profile-remove <uuid>` | takes one profile off the phone, saving a copy in `profili-salvati/` |
 | `profile-restore <file>` | puts a saved profile back |

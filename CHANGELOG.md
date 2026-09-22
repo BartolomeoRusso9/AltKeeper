@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Works from outside your home network.** `--dns-domain` publishes the AltServer service as
+  ordinary DNS records (unicast DNS-SD), so AltStore discovers it through a VPN. iOS never sends
+  Bonjour multicast over a VPN interface, but it does send plain DNS queries, and AltStore browses
+  the device's search domains. Includes a small built-in DNS responder (UDP, answers only for its
+  own names); put it behind the resolver you already run. See the README for the full setup.
+
 ## 0.2.0
 
 ### Added
