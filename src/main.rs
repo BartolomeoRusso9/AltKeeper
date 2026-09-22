@@ -62,6 +62,19 @@ fn altserver_port(opt: Option<String>) -> Result<u16, String> {
         .map(|p| p.unwrap_or(49500))
 }
 
+/// Legge una rete nella forma `10.7.0.0/24`.
+fn parse_cidr(s: &str) -> Result<(std::net::Ipv4Addr, u8), String> {
+    let (ip, bits) = s
+        .split_once('/')
+        .ok_or_else(|| format!("--dns-clients {s}: manca la lunghezza, per esempio 10.7.0.0/24"))?;
+    let ip = ip.parse().map_err(|e| format!("--dns-clients: indirizzo non valido: {e}"))?;
+    let bits: u8 = bits.parse().map_err(|e| format!("--dns-clients: /{bits} non valido: {e}"))?;
+    if bits > 32 {
+        return Err(format!("--dns-clients: /{bits} non esiste, il massimo è /32"));
+    }
+    Ok((ip, bits))
+}
+
 /// Avvia, se richiesto, il server DNS che pubblica AltServer come record normali (DNS-SD
 /// unicast). Serve per farsi trovare da AltStore quando il telefono non è sulla rete di casa:
 /// iOS non manda le richieste Bonjour multicast dentro le VPN, ma le query DNS sì.
@@ -78,12 +91,19 @@ fn start_dnssd(opt: impl Fn(&str) -> Option<String>, altserver_port: u16) -> Res
         Some(p) => p.parse().map_err(|e| format!("--dns-port non valido: {e}"))?,
         None => 5533,
     };
+    // Da dove arrivano i client: serve perché iOS scopre il dominio chiedendo del "rovescio"
+    // del proprio indirizzo. Se non si indica, si assume la /24 dell'indirizzo pubblicato.
+    let clients = match opt("--dns-clients") {
+        Some(cidr) => parse_cidr(&cidr)?,
+        None => (address, 24),
+    };
     let zone = dnssd::Zone::new(
         &domain,
         &altserver::instance_name(),
         &altserver::id()?,
         altserver_port,
         address,
+        clients,
     );
     dnssd::start(zone, SocketAddr::from(([0, 0, 0, 0], port)))?;
     Ok(())

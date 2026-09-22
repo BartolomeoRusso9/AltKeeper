@@ -41,12 +41,22 @@ pub struct Zone {
     server_id: String,
     port: u16,
     address: Ipv4Addr,
+    /// La sottorete da cui arrivano i client (di solito quella della VPN), come indirizzo e
+    /// numero di bit: serve per la scoperta automatica del dominio.
+    clients: (Ipv4Addr, u8),
 }
 
 impl Zone {
     /// `instance` è il nome visibile del server, `id` il suo serverID (quello che AltStore usa
     /// per riconoscerlo). Il nome host si ricava dall'id, come nell'annuncio Bonjour.
-    pub fn new(domain: &str, instance: &str, id: &str, port: u16, address: Ipv4Addr) -> Self {
+    pub fn new(
+        domain: &str,
+        instance: &str,
+        id: &str,
+        port: u16,
+        address: Ipv4Addr,
+        clients: (Ipv4Addr, u8),
+    ) -> Self {
         let domain = domain.trim_matches('.').to_ascii_lowercase();
         let short = &id[..id.len().min(8)];
         Self {
@@ -56,6 +66,7 @@ impl Zone {
             server_id: id.to_string(),
             port,
             address,
+            clients,
             domain,
         }
     }
@@ -66,9 +77,15 @@ impl Zone {
         let want = |t: u16| qtype == t || qtype == TYPE_ANY;
 
         // I tre nomi con cui un client chiede "quali domini posso esplorare?" (RFC 6763 par. 11).
-        // Rispondiamo con il nostro, così basta impostarlo come dominio di ricerca.
-        for prefix in ["b", "db", "lb"] {
-            if name == format!("{prefix}._dns-sd._udp.{}", self.domain) {
+        //
+        // La domanda arriva in due forme. La prima è sul dominio stesso, e serve a chi lo ha già
+        // come dominio di ricerca. La seconda, più importante, è sul "rovescio" dell'indirizzo
+        // che il client ha sulla rete: iOS la fa da solo, senza che sul telefono sia impostato
+        // niente. Rispondendo anche a quella, il server si fa trovare senza configurazione.
+        if let Some(rest) = ["b", "db", "lb"].iter().find_map(|p| {
+            name.strip_prefix(&format!("{p}._dns-sd._udp."))
+        }) {
+            if rest == self.domain || self.covers_reverse(rest) {
                 return Some(if want(TYPE_PTR) {
                     vec![Record::Ptr { name: name.to_string(), target: self.domain.clone() }]
                 } else {
@@ -112,6 +129,42 @@ impl Zone {
         }
 
         None
+    }
+
+    /// Vero se `name` è un nome inverso (`…in-addr.arpa`) che ricade nella sottorete dei client.
+    ///
+    /// Accetta sia l'indirizzo intero (`2.0.7.10.in-addr.arpa`, che è come lo chiede iOS) sia la
+    /// sola parte di rete (`0.7.10.in-addr.arpa`): in quel caso gli ottetti mancanti valgono zero.
+    fn covers_reverse(&self, name: &str) -> bool {
+        let Some(rev) = name.strip_suffix(".in-addr.arpa") else { return false };
+        let mut octets = [0u8; 4];
+        let mut quanti = 0;
+        // Il nome inverso ha gli ottetti al contrario: 2.0.7.10 vuol dire 10.7.0.2.
+        for (i, part) in rev.split('.').enumerate() {
+            if i >= 4 {
+                return false;
+            }
+            let Ok(n) = part.parse::<u8>() else { return false };
+            octets[3 - i] = n;
+            quanti += 1;
+        }
+        if quanti == 0 {
+            return false;
+        }
+        // Se mancano ottetti in testa, il nome copre una rete: si allinea a sinistra.
+        if quanti < 4 {
+            let mancanti = 4 - quanti;
+            octets.rotate_left(mancanti);
+        }
+        let (rete, bits) = self.clients;
+        if bits == 0 {
+            return true;
+        }
+        if bits > 32 {
+            return false;
+        }
+        let maschera = u32::MAX << (32 - bits);
+        (u32::from(Ipv4Addr::from(octets)) & maschera) == (u32::from(rete) & maschera)
     }
 }
 
@@ -320,6 +373,7 @@ mod tests {
             "8e68e3c9e57288e9f7260efb6ea76c93",
             49500,
             Ipv4Addr::new(10, 0, 0, 5),
+            (Ipv4Addr::new(10, 0, 0, 0), 24),
         )
     }
 
@@ -395,6 +449,42 @@ mod tests {
             let msg = risposta(&format!("{prefisso}._dns-sd._udp.casa.internal"), TYPE_PTR);
             assert_eq!(rcode(&msg), RCODE_OK, "{prefisso}");
             assert_eq!(conta_risposte(&msg), 1, "{prefisso}");
+        }
+    }
+
+    #[test]
+    fn ios_scopre_il_dominio_dal_rovescio_del_proprio_indirizzo() {
+        // È la domanda che iOS fa da solo, senza niente di impostato sul telefono.
+        let msg = risposta("lb._dns-sd._udp.7.0.0.10.in-addr.arpa", TYPE_PTR);
+        assert_eq!(rcode(&msg), RCODE_OK);
+        assert_eq!(conta_risposte(&msg), 1);
+        let testo = String::from_utf8_lossy(&msg);
+        assert!(testo.contains("casa"), "dominio assente: {testo:?}");
+    }
+
+    #[test]
+    fn vale_anche_la_forma_con_la_sola_rete() {
+        let msg = risposta("lb._dns-sd._udp.0.0.10.in-addr.arpa", TYPE_PTR);
+        assert_eq!(conta_risposte(&msg), 1);
+    }
+
+    #[test]
+    fn un_rovescio_di_unaltra_rete_non_ci_riguarda() {
+        // 192.168.9.4: fuori dalla sottorete dei client, non dobbiamo rispondere.
+        let msg = risposta("lb._dns-sd._udp.4.9.168.192.in-addr.arpa", TYPE_PTR);
+        assert_eq!(rcode(&msg), RCODE_NXDOMAIN);
+    }
+
+    #[test]
+    fn un_rovescio_malformato_non_fa_danni() {
+        for nome in [
+            "lb._dns-sd._udp.999.0.0.10.in-addr.arpa",
+            "lb._dns-sd._udp.a.b.c.d.in-addr.arpa",
+            "lb._dns-sd._udp.1.2.3.4.5.in-addr.arpa",
+            "lb._dns-sd._udp..in-addr.arpa",
+        ] {
+            let msg = risposta(nome, TYPE_PTR);
+            assert_eq!(rcode(&msg), RCODE_NXDOMAIN, "{nome}");
         }
     }
 
