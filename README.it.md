@@ -21,16 +21,17 @@ C'è anche una piccola **pagina web** per vedere lo stato delle app e rinnovarle
 <img src="docs/screenshots/web.png" alt="Pagina web di AltKeeper: iPhone raggiungibile, tre app con la scadenza, pulsanti di rinnovo" width="320">
 
 > **Stato: sperimentale.** Provato su un iPhone 15 Pro (iOS 27.0) con AltStore Classic (l'ultima
-> versione al momento della scrittura), con il programma su un Mac e, per il rinnovo senza controllo,
-> su un server Debian 13 (x86-64). Usa API private di Apple e il protocollo di AltStore, che possono
+> versione al momento della scrittura), con il programma su un Mac e su un mini PC
+> Debian 13 (x86-64, Docker). Usa API private di Apple e il protocollo di AltStore, che possono
 > cambiare senza preavviso. Per uso personale con il proprio Apple ID; non affiliato ad Apple né ad
-> AltStore. I messaggi del programma e i commenti nel codice sono in italiano.
+> AltStore. Alcuni messaggi del programma e commenti nel codice sono ancora in italiano (la lingua originale del progetto).
 >
-> Confermato (AltServer sul Mac): il *Refresh* da AltStore installa il profilo nuovo sull'iPhone e
-> l'installazione di un'app (circa 126 MB) da AltStore funziona. Confermato prima: login, `apps`,
+> Confermato con AltServer dall'immagine Docker sul mini PC Debian: il *Refresh* da AltStore installa
+> il profilo nuovo sull'iPhone e l'installazione di un'app da AltStore funziona. Confermato prima con
+> il server sul Mac: lo stesso, con un'app di circa 126 MB, più login, `apps`,
 > `renew`, e che un'app si apre anche con i soli profili *nuovi* installati (anche dopo il riavvio
 > dell'iPhone). Non ancora confermato: cosa succede il giorno in cui scade il profilo *originale*, e
-> AltServer dall'immagine Docker su un server per un periodo lungo.
+> AltServer su un server per un periodo lungo.
 
 ## Cosa fa e cosa non fa
 
