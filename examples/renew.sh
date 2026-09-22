@@ -31,9 +31,9 @@ if [ "$RC" -ne 0 ]; then
   fi
 else
   rm -f .ultimo-errore
-  N=$(echo "$OUT" | grep -c "installato sul telefono")
+  N=$(echo "$OUT" | grep -c -E "installed on the phone|installato sul telefono")
   if [ "$N" -gt 0 ]; then
-    APPS=$(echo "$OUT" | grep "scarico un profilo nuovo" | sed -E "s/^ +([^:]+):.*/\1/" | sort -u | tr "\n" " ")
+    APPS=$(echo "$OUT" | grep -E "downloading a new profile|scarico un profilo nuovo" | sed -E "s/^ +([^:]+):.*/\1/" | sort -u | tr "\n" " ")
     notifica "altkeeper: app rinnovate" "$APPS" 3 white_check_mark
   fi
 fi
