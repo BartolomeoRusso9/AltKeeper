@@ -220,6 +220,160 @@ Un workflow di GitHub Actions (`.github/workflows/docker.yml`) lancia i test e p
 `ghcr.io/<utente>/altkeeper` a ogni push su `main` (amd64) e sui tag `vX.Y.Z` (amd64 e arm64).
 Non è ancora stato eseguito su GitHub. Se il repository è privato lo è anche il pacchetto.
 
+## Usarlo da fuori casa
+
+AltStore cerca i server con Bonjour, che di solito vuol dire multicast — e **iOS il multicast non
+lo manda mai dentro una VPN**. Per questo installare Tailscale o ZeroTier da solo non basta: il
+telefono non fa proprio la domanda.
+
+La via d'uscita è la seconda modalità di Bonjour, più vecchia: il **DNS-SD unicast**, in cui i
+servizi si pubblicano come normali record DNS. AltStore cerca in un dominio vuoto, cioè "tutti i
+domini predefiniti", e iOS capisce quali siano chiedendolo al server DNS della rete in cui si
+trova. Rispondendo a quella domanda, il telefono trova il server da solo — senza impostare niente
+sul telefono.
+
+AltKeeper quei record li serve da sé. Ecco tutto il procedimento.
+
+### 1. Una VPN tra telefono e server
+
+Va bene qualunque VPN, purché il telefono ci prenda un indirizzo. WireGuard è la scelta migliore:
+è dentro il kernel Linux, l'app iOS è gratuita e regge meglio delle altre i cambi di rete.
+
+Sul server:
+
+```
+apt install wireguard-tools
+cd /etc/wireguard
+umask 077
+wg genkey > server.key && wg pubkey < server.key > server.pub
+wg genkey > phone.key  && wg pubkey < phone.key  > phone.pub
+wg genpsk > psk.key
+```
+
+`/etc/wireguard/wg0.conf`:
+
+```ini
+[Interface]
+Address = 10.7.0.1/24
+ListenPort = 51820
+PrivateKey = <contenuto di server.key>
+
+[Peer]
+PublicKey = <contenuto di phone.pub>
+PresharedKey = <contenuto di psk.key>
+AllowedIPs = 10.7.0.2/32
+```
+
+```
+systemctl enable --now wg-quick@wg0
+```
+
+Sul router inoltra la porta **UDP 51820** a questa macchina. WireGuard non risponde mai ai
+pacchetti che non sono crittograficamente validi, quindi la porta resta invisibile a chi
+scansiona — ma è pur sempre una porta aperta, e conviene limitare cosa può raggiungere chi entra.
+Aggiungi in `[Interface]`:
+
+```ini
+PostUp = iptables -I INPUT 1 -i wg0 -p udp --dport 53 -j ACCEPT
+PostUp = iptables -I INPUT 2 -i wg0 -p tcp --dport 49500 -j ACCEPT
+PostUp = iptables -I INPUT 3 -i wg0 -p tcp --dport 8787 -j ACCEPT
+PostUp = iptables -I INPUT 4 -i wg0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+PostUp = iptables -A INPUT -i wg0 -j DROP
+PostUp = iptables -I FORWARD 1 -i wg0 -j DROP
+```
+
+Così dal tunnel si raggiungono solo DNS, AltServer e la pagina web, e nient'altro: niente SSH e
+nessuna via verso il resto della rete di casa. Ogni regola va tolta con un `PostDown = iptables -D …`
+corrispondente.
+
+La configurazione del telefono, che importi inquadrando un codice QR
+(`qrencode -t ansiutf8 < phone.conf`):
+
+```ini
+[Interface]
+PrivateKey = <contenuto di phone.key>
+Address = 10.7.0.2/32
+DNS = 10.7.0.1
+
+[Peer]
+PublicKey = <contenuto di server.pub>
+PresharedKey = <contenuto di psk.key>
+Endpoint = indirizzo-di-casa:51820
+AllowedIPs = 10.7.0.0/24
+PersistentKeepalive = 25
+```
+
+`AllowedIPs = 10.7.0.0/24` manda nel tunnel solo la sua rete, quindi la normale navigazione del
+telefono non cambia. `Endpoint` vuole un indirizzo che segua la tua connessione di casa: se
+l'operatore te lo cambia, serve un nome DNS dinamico.
+
+### 2. Pubblicare i record
+
+```
+altkeeper altserver --dns-domain casa.internal --dns-address 10.7.0.1 --dns-clients 10.7.0.0/24
+```
+
+- `--dns-address` è l'indirizzo a cui il telefono deve collegarsi: quello di questa macchina
+  **sulla VPN**.
+- `--dns-clients` è la rete da cui arrivano i telefoni. Conta perché iOS scopre il dominio
+  chiedendo del "rovescio" del proprio indirizzo; se non lo indichi, AltKeeper assume la `/24`
+  attorno a `--dns-address`.
+- Il server DNS ascolta sulla porta UDP 5533 (`--dns-port`), risponde solo per i propri nomi e
+  non inoltra niente.
+
+### 3. Far arrivare quelle risposte al telefono
+
+Il DNS del telefono è il server (`DNS = 10.7.0.1` qui sopra), cioè il resolver che già usi. Basta
+inoltrargli questo solo dominio — e la zona inversa della rete della VPN.
+
+Con **AdGuard Home**, in *Server DNS upstream*:
+
+```
+[/casa.internal/]127.0.0.1:5533
+```
+
+e, siccome AdGuard manda le richieste inverse private a un elenco a parte, aggiungi anche in
+*Server DNS inversi privati*:
+
+```
+[/7.10.in-addr.arpa/]127.0.0.1:5533
+```
+
+Con **dnsmasq**:
+
+```
+server=/casa.internal/127.0.0.1#5533
+server=/7.10.in-addr.arpa/127.0.0.1#5533
+```
+
+Quella seconda riga è quella che sfugge a tutti, e senza di lei il telefono non scopre mai il
+dominio.
+
+### 4. La prova
+
+Accendi la VPN, collega il telefono a un Wi-Fi che non sia quello di casa e premi *Refresh All*.
+Sul server dovresti vedere prima la scoperta e poi il lavoro:
+
+```
+[altserver] 10.7.0.2: AnisetteDataRequest -> AnisetteDataResponse
+[altserver] 10.7.0.2: InstallProvisioningProfilesRequest
+[altserver] profilo installato: com.esempio.app
+```
+
+Se dice che non trova il server, guarda le richieste DNS con `tcpdump -i wg0 -n port 53` e controlla
+quale nome sta chiedendo il telefono.
+
+### Cosa aspettarsi
+
+- **Il telefono deve essere su Wi-Fi.** iOS tiene acceso il servizio di pairing che serve ad
+  AltKeeper solo quando è collegato a una rete Wi-Fi; con la sola rete dati la porta è chiusa, e
+  non c'è modo di aggirarlo.
+- **Il rinnovo automatico attraverso il tunnel non è ancora affidabile.** iOS sospende le app VPN
+  in background, quindi il cron notturno può trovare il telefono irraggiungibile. Il rinnovo fatto
+  a mano con il tunnel attivo funziona bene.
+- Se il server trovava il telefono scandagliando la rete, scrivi il suo indirizzo VPN in
+  `state/phone-addr` (`10.7.0.2:49152`), così lo prova per primo.
+
 ## Comandi
 
 | Comando | Cosa fa |
@@ -229,7 +383,7 @@ Non è ancora stato eseguito su GitHub. Se il repository è privato lo è anche 
 | `login <apple-id>` | accede con 2FA e salva l'account |
 | `apps` | elenca i tuoi App ID e le scadenze |
 | `renew [--dry-run] [--force] [--min-days N] [--phone ip:porta]` | rinnova i profili in scadenza |
-| `altserver [--port N] [--dir cartella] [--phone ip:porta]` | fa da AltServer per AltStore |
+| `altserver [--port N] [--dir cartella] [--phone ip:porta] [--dns-domain D --dns-address IP]` | fa da AltServer per AltStore |
 | `serve [--bind ip:porta] [--pin PIN] [--dir cartella] [--phone ip:porta] [--altserver] [--altserver-port N]` | pagina web (e, con `--altserver`, AltServer) |
 | `profile-remove <uuid>` | toglie un profilo dal telefono, salvandone una copia in `profili-salvati/` |
 | `profile-restore <file>` | rimette un profilo salvato |

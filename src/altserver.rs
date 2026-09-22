@@ -140,6 +140,16 @@ fn hostname() -> String {
         .unwrap_or_else(|| "altkeeper".into())
 }
 
+/// Il nome con cui questo server si presenta, lo stesso usato nell'annuncio Bonjour.
+pub fn instance_name() -> String {
+    format!("altkeeper-{}", hostname())
+}
+
+/// Il serverID: AltStore riconosce il server da questo, non dall'indirizzo.
+pub fn id() -> Result<String, String> {
+    server_id()
+}
+
 fn register_bonjour(port: u16, id: &str) -> Result<(), String> {
     let daemon = phone::mdns().ok_or("Bonjour non disponibile")?;
     let host = hostname();

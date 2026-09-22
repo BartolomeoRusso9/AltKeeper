@@ -9,15 +9,20 @@
 //!   altkeeper profile-remove <uuid> [--phone ip:porta]   toglie un profilo (ne salva prima una copia)
 //!   altkeeper profile-restore <file> [--phone ip:porta]  rimette un profilo salvato
 //!   altkeeper serve [--bind ip:porta] [--pin PIN] [--dir cartella] [--phone ip:porta]
-//!                    [--altserver] [--altserver-port N]
+//!                    [--altserver] [--altserver-port N] [--dns-domain D --dns-address IP]
 //!                                                  interfaccia web (stato, rinnovo, accesso Apple ID)
 //!   altkeeper altserver [--port N] [--dir cartella] [--phone ip:porta]
+//!                    [--dns-domain D --dns-address IP [--dns-port N]]
 //!                                                  fa da AltServer per AltStore (Refresh All e installazioni)
 //!
 //! Se non indichi il telefono (`--phone` o ALTKEEPER_PHONE) lo cerca in rete via Bonjour.
+//!
+//! Con `--dns-domain` pubblica AltServer anche come record DNS normali, così AltStore lo trova
+//! da fuori casa attraverso una VPN (iOS non manda Bonjour multicast nei tunnel, le query DNS sì).
 
 mod altserver;
 mod apple;
+mod dnssd;
 mod env;
 mod phone;
 mod profile;
@@ -55,6 +60,53 @@ fn altserver_port(opt: Option<String>) -> Result<u16, String> {
     opt.map(|v| v.parse::<u16>().map_err(|e| format!("porta non valida: {e}")))
         .transpose()
         .map(|p| p.unwrap_or(49500))
+}
+
+/// Legge una rete nella forma `10.7.0.0/24`.
+fn parse_cidr(s: &str) -> Result<(std::net::Ipv4Addr, u8), String> {
+    let (ip, bits) = s
+        .split_once('/')
+        .ok_or_else(|| format!("--dns-clients {s}: manca la lunghezza, per esempio 10.7.0.0/24"))?;
+    let ip = ip.parse().map_err(|e| format!("--dns-clients: indirizzo non valido: {e}"))?;
+    let bits: u8 = bits.parse().map_err(|e| format!("--dns-clients: /{bits} non valido: {e}"))?;
+    if bits > 32 {
+        return Err(format!("--dns-clients: /{bits} non esiste, il massimo è /32"));
+    }
+    Ok((ip, bits))
+}
+
+/// Avvia, se richiesto, il server DNS che pubblica AltServer come record normali (DNS-SD
+/// unicast). Serve per farsi trovare da AltStore quando il telefono non è sulla rete di casa:
+/// iOS non manda le richieste Bonjour multicast dentro le VPN, ma le query DNS sì.
+fn start_dnssd(opt: impl Fn(&str) -> Option<String>, altserver_port: u16) -> Result<(), String> {
+    let Some(domain) = opt("--dns-domain") else { return Ok(()) };
+    let address: std::net::Ipv4Addr = opt("--dns-address")
+        .ok_or(
+            "--dns-domain vuole anche --dns-address <ip>: l'indirizzo a cui il telefono si \
+             collega, di solito quello della VPN di questa macchina",
+        )?
+        .parse()
+        .map_err(|e| format!("--dns-address non valido: {e}"))?;
+    let port: u16 = match opt("--dns-port") {
+        Some(p) => p.parse().map_err(|e| format!("--dns-port non valido: {e}"))?,
+        None => 5533,
+    };
+    // Da dove arrivano i client: serve perché iOS scopre il dominio chiedendo del "rovescio"
+    // del proprio indirizzo. Se non si indica, si assume la /24 dell'indirizzo pubblicato.
+    let clients = match opt("--dns-clients") {
+        Some(cidr) => parse_cidr(&cidr)?,
+        None => (address, 24),
+    };
+    let zone = dnssd::Zone::new(
+        &domain,
+        &altserver::instance_name(),
+        &altserver::id()?,
+        altserver_port,
+        address,
+        clients,
+    );
+    dnssd::start(zone, SocketAddr::from(([0, 0, 0, 0], port)))?;
+    Ok(())
 }
 
 /// Si collega al telefono, all'indirizzo indicato o a quello trovato in rete.
@@ -353,7 +405,10 @@ async fn main() -> Result<(), String> {
             web::check_options(bind, &pin)?;
             apple::anisette_url(env::var("ANISETTE_URL").as_deref())?;
             if flag("--altserver") {
-                altserver::start(altserver_port(opt("--altserver-port"))?, phone)?;
+                let port = altserver::start(altserver_port(opt("--altserver-port"))?, phone)?;
+                start_dnssd(&opt, port)?;
+            } else if opt("--dns-domain").is_some() {
+                return Err("--dns-domain serve solo insieme a --altserver".into());
             }
             web::serve(bind, pin, phone).await
         }
@@ -362,7 +417,8 @@ async fn main() -> Result<(), String> {
                 std::env::set_current_dir(&dir).map_err(|e| format!("--dir {dir}: {e}"))?;
             }
             apple::anisette_url(env::var("ANISETTE_URL").as_deref())?;
-            altserver::start(altserver_port(opt("--port"))?, phone_addr(opt("--phone"))?)?;
+            let port = altserver::start(altserver_port(opt("--port"))?, phone_addr(opt("--phone"))?)?;
+            start_dnssd(&opt, port)?;
             println!("AltServer attivo. Ctrl-C per fermarlo.");
             let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                 .map_err(dbg)?;
